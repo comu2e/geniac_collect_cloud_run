@@ -1,11 +1,24 @@
 #! /usr/bin/env python
-import os
-import glob
 
 import gzip
 import shutil
 import requests
 import argparse
+import boto3
+
+from botocore.exceptions import NoCredentialsError
+from boto3.s3.transfer import  TransferConfig
+import sys
+
+import threading
+from warcio.archiveiterator import ArchiveIterator
+from bs4 import BeautifulSoup
+from tqdm import tqdm
+import json
+import glob
+import os
+
+from s3_util import download_file_with_progress,put_s3
 
 base_url = "https://data.commoncrawl.org/"
 os.makedirs("data/gz", exist_ok=True) 
@@ -60,33 +73,6 @@ def cc_path_to_urls(cc_path):
     return url, gz_path, warc_path
 
 
-def download_warc_file(path):
-    url, gz_path, warc_path = cc_path_to_urls(path)
-
-    if os.path.exists(warc_path):
-        print(f"warc_pathにはファイルが存在しています")
-        return warc_path
-    try:
-        if os.path.exists(gz_path):
-            print(f"gz_pathがすでに存在します: {gz_path}")
-        else:
-            print("downloading "+url)
-            download_file(url, gz_path)
-        print("decompressing "+gz_path)
-        decompress_gz(gz_path, warc_path,
-                      remove_gz=False, fill_blank_gz=True)
-        return warc_path
-    except Exception as e:
-        print(e)
-        print("fail loading "+url)
-        return warc_path
-
-from warcio.archiveiterator import ArchiveIterator
-from bs4 import BeautifulSoup
-from tqdm import tqdm
-import json
-import glob
-import os
 
 def halfwidth_ratio(s):
     if len(s) == 0:  # 空の文字列の場合は0を返す
@@ -167,7 +153,10 @@ def extract_japanese_from_warc(path,
 
 def download_and_parse(cc_path, base_dir=None):
     # warcファイルのダウンロード
-    warc_path = download_warc_file(cc_path)
+    # warc_path = download_warc_file(cc_path)
+    warc_path = download_warc_file_with_s3(cc_path)
+    print(warc_path)
+    print(warc_path)
     # ファイル関連の処理
     os.makedirs(base_dir, exist_ok=True)
     # パス関連の処理
@@ -200,8 +189,6 @@ def download_and_parse(cc_path, base_dir=None):
 
 def curation(batch_number, submit_dir="/content/submit", is_debug=False):
     s3_bucket_name = os.environ.get('S3_BUCKET_NAME')
-    print(s3_bucket_name)
-
     cc_path_list = get_cc_path_list()
     if is_debug:
         n_batch = 1
@@ -214,7 +201,7 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
     shutil.make_archive(f'{submit_dir}/{batch_number}',
                         format='zip', root_dir=f"process/batch{batch_number}")
 
-    put_s3(s3_bucket_name, f"{submit_dir}/{batch_number}.zip", f"{batch_number}.zip")
+    # put_s3(s3_bucket_name, f"{submit_dir}/{batch_number}.zip", f"{batch_number}.zip")
     shutil.rmtree("process/")
 
 
@@ -254,8 +241,6 @@ def main(batch_number):
     # 保存されているwarcファイルのパスのリストを取得
     cc_paths = get_cc_path_list(path_dir="data/path_list/*")
     # 表示
-    cc_paths
-
     # ここの番号を指定を受けた番号に変更をしてください
     # is_debug = True
     is_debug = os.environ.get('IS_DEBUG', "False")
@@ -275,6 +260,56 @@ def main(batch_number):
 
     # batchの番号に従って,データの処理
     curation(batch_number, submit_dir=submit_dir, is_debug=is_debug)
+    print(f"batch{batch_number}の処理が完了しました")
+    put_s3(os.environ.get('S3_BUCKET_NAME'),
+           f"{submit_dir}/{batch_number}.zip", f"{batch_number}.zip")
+    print(f"{submit_dir}/{batch_number}.zipをS3にアップロードしました")
+
+
+
+class ProgressPercentage(object):
+    def __init__(self, filename):
+        self._filename = filename
+        self._size = float(os.path.getsize(filename))
+        self._seen_so_far = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, bytes_amount):
+        with self._lock:
+            self._seen_so_far += bytes_amount
+            percentage = (self._seen_so_far / self._size) * 100
+            sys.stdout.write(
+                "\r%s  %s / %s  (%.2f%%)" % (
+                    self._filename, self._seen_so_far, self._size,
+                    percentage))
+            sys.stdout.flush()
+
+def download_warc_file_with_s3(path):
+    url, gz_path, warc_path = cc_path_to_urls(path)
+
+    if os.path.exists(warc_path):
+        print(f"warc_pathにはファイルが存在しています")
+        return warc_path
+
+    try:
+        s3 = boto3.client('s3')
+        CC_BUCKET_NAME = "commoncrawl"
+        config = TransferConfig()
+        print(f'download from s3://{CC_BUCKET_NAME}/{path} to {warc_path}')
+        # s3からダウンロードする設定
+        download_file_with_progress(CC_BUCKET_NAME, path, warc_path)
+
+        decompress_gz(gz_path, warc_path,
+                      remove_gz=False, fill_blank_gz=True)
+        return warc_path
+    except NoCredentialsError:
+        print("Credentials not available")
+    except Exception as e:
+        print(e)
+        print("fail loading " + url)
+        return warc_path
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -282,3 +317,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     print(args.batch_number)
     main(args.batch_number)
+

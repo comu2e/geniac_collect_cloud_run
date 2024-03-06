@@ -43,8 +43,8 @@ if __name__ == "__main__":
 
 
     # リスト内包表記で作成
-    batchs = [i for i in range(391,400 )]
-    batchs = [393,396,397,399]
+    # batchs = [i for i in range(391,400 )]
+    batchs = [100]
 
     handler(batchs)
 
