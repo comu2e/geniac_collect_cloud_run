@@ -13,7 +13,7 @@ def handler(batchs:list[int]):
         ecs.run_task(
             cluster='geniac_takahashi',
             launchType='FARGATE',
-            taskDefinition='geniac_takahashi',
+            taskDefinition='geniac_takahashi:26',
             networkConfiguration={
                 'awsvpcConfiguration': {
                     'subnets': [
@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
     # リスト内包表記で作成
     # batchs = [i for i in range(391,400 )]
-    batchs = [100]
+    batchs = [100,101,102]
 
     handler(batchs)
 

@@ -126,7 +126,14 @@ def extract_japanese_from_warc(path,
             if record.rec_type == 'response':
                 if record.http_headers.get_header('Content-Type') == 'text/html':
                     content = record.content_stream().read()
-                    soup = BeautifulSoup(content, 'html.parser')
+                    PARSER_TYPE = os.environ.get("PARSER_TYPE", "html.parser")
+                    if PARSER_TYPE == "lxml":
+                        soup = BeautifulSoup(content, 'lxml')
+                    elif PARSER_TYPE == "html":
+                        soup = BeautifulSoup(content, 'html.parser')
+                    else:
+                        raise ValueError(
+                            "PARSER_TYPE is not defined.please set environment PARSER_TYPE=lxml.parser or html.parser")
                     # <html>タグからlang属性を取得
                     html_tag = soup.find('html')
                     if html_tag and html_tag.has_attr('lang'):
@@ -150,11 +157,45 @@ def extract_japanese_from_warc(path,
                         if len(ja_soup_list) > max_num:
                             break
     return ja_soup_list
+def download_warc_file(path):
+    '''cloudfrontからHTTP経由でダウンロードする'''
+    url, gz_path, warc_path = cc_path_to_urls(path)
+
+    if os.path.exists(warc_path):
+        print(f"warc_pathにはファイルが存在しています")
+        return warc_path
+    try:
+        if os.path.exists(gz_path):
+            print(f"gz_pathがすでに存在します: {gz_path}")
+        else:
+            print("downloading "+url)
+            download_file(url, gz_path)
+        print("decompressing "+gz_path)
+        decompress_gz(gz_path, warc_path,
+                      remove_gz=False, fill_blank_gz=True)
+        return warc_path
+    except Exception as e:
+        print(e)
+        print("fail loading "+url)
+        return warc_path
+
 
 def download_and_parse(cc_path, base_dir=None):
     # warcファイルのダウンロード
-    # warc_path = download_warc_file(cc_path)
-    warc_path = download_warc_file_with_s3(cc_path)
+    DOWNLOAD_MODE = os.environ.get("DOWNLOAD_MODE", "http")
+
+    # download warc file
+    if DOWNLOAD_MODE == "http":
+        print("downloading mode with http ")
+        warc_path = download_warc_file(cc_path)
+    elif DOWNLOAD_MODE == "s3":
+        # awsで使用する時は環境変数にDOWNLOAD_MODE=s3を設定する。
+        print("downloading mode with s3 ")
+        warc_path = download_warc_file_with_s3(cc_path)
+    else:
+        raise ValueError("DOWNLOAD_MODE is not defined.please set environment DOWNLOAD_MODE=http or s3")
+
+
     print(warc_path)
     print(warc_path)
     # ファイル関連の処理
