@@ -17,3 +17,4 @@ COPY . /geniac-collect-jp/
 # Install dependencies
 RUN poetry config virtualenvs.create false
 RUN poetry install
+EXPOSE 5432

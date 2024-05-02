@@ -1,6 +1,8 @@
 import boto3
 from tqdm import tqdm
-
+from src.aws import Credentials, get_aws_creds
+from boto3.session import Session
+import os
 
 class DownloadProgressBar(object):
     def __init__(self):
@@ -17,7 +19,17 @@ class DownloadProgressBar(object):
 
 
 def download_file_with_progress(bucket_name, path, destination_filename):
-    s3 = boto3.client('s3')
+
+    AWS_ROLE_ARN = os.environ.get("ROLE_ARN","arn:aws:iam::369149519541:role/iam-gcp-s3-get")
+    print(f"aws role arn: {AWS_ROLE_ARN}")
+    creds = get_aws_creds(AWS_ROLE_ARN) if AWS_ROLE_ARN else None
+    session: Session = Session(
+        aws_access_key_id=creds.get("AccessKeyId"),
+        aws_secret_access_key=creds.get("SecretAccessKey"),
+        aws_session_token=creds.get("SessionToken"),
+    ) if creds else Session()
+
+    s3 = session.client('s3')
 
     # S3からファイルのサイズを取得
     response = s3.head_object(Bucket=bucket_name, Key=path)
@@ -35,4 +47,3 @@ def put_s3(bucket_name, file_name, file_path):
     import boto3
     s3 = boto3.client('s3')
     s3.upload_file(file_name, bucket_name, file_path)
-

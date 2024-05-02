@@ -2,15 +2,19 @@
 
 import gzip
 import shutil
+import uuid
+from datetime import datetime
+from typing import List, Dict, Union, Tuple
+
 import requests
 import argparse
-import boto3
 
 from botocore.exceptions import NoCredentialsError
-from boto3.s3.transfer import  TransferConfig
 import sys
 
 import threading
+
+from pydantic import BaseModel
 from warcio.archiveiterator import ArchiveIterator
 from bs4 import BeautifulSoup
 from tqdm import tqdm
@@ -18,11 +22,13 @@ import json
 import glob
 import os
 
-from s3_util import download_file_with_progress,put_s3
+from src.load_warc import concat_records, concat_records
+from src.repository.warc import Warc, WarcRepository
+from src.s3_util import download_file_with_progress,put_s3
 
 base_url = "https://data.commoncrawl.org/"
-os.makedirs("data/gz", exist_ok=True) 
-os.makedirs("data/warc", exist_ok=True)
+os.makedirs("tmp/data/gz", exist_ok=True)
+os.makedirs("tmp/data/warc", exist_ok=True)
 
 def download_file(url, save_path):
 
@@ -67,8 +73,8 @@ def get_cc_path_list(path_dir="data/path_list/*"):
 def cc_path_to_urls(cc_path):
     url = base_url+cc_path
     filename = cc_path.replace("/", "_")
-    gz_path = f"data/gz/{filename}"
-    warc_path = f"data/warc/{filename}".replace(".gz", "")
+    gz_path = f"tmp/data/gz/{filename}"
+    warc_path = f"tmp/data/warc/{filename}".replace(".gz", "")
 
     return url, gz_path, warc_path
 
@@ -126,6 +132,7 @@ def extract_japanese_from_warc(path,
             if record.rec_type == 'response':
                 if record.http_headers.get_header('Content-Type') == 'text/html':
                     content = record.content_stream().read()
+
                     PARSER_TYPE = os.environ.get("PARSER_TYPE", "html.parser")
                     if PARSER_TYPE == "lxml":
                         soup = BeautifulSoup(content, 'lxml')
@@ -139,6 +146,7 @@ def extract_japanese_from_warc(path,
                     if html_tag and html_tag.has_attr('lang'):
                         lang = html_tag['lang']
                         texts = pre_clean(soup)
+                        pre_cleaned_text = concat_records(texts)
                         if len(texts) == 0:
                             continue
                         if lang == "ja":
@@ -151,7 +159,9 @@ def extract_japanese_from_warc(path,
                                 "url": record.rec_headers.get_header('WARC-Target-URI'),
                                 "title": title,
                                 "timestamp": record.rec_headers.get_header('WARC-Date'),
-                                "text": texts,
+                                "pre_cleaned_text": pre_cleaned_text,
+                                # Todo:contentはそのままだと文字化けしているのでdecodeする
+                                "html": str(content.decode('utf-8', 'ignore')),
                             }
                             ja_soup_list.append(d)
                         if len(ja_soup_list) > max_num:
@@ -197,16 +207,9 @@ def download_and_parse(cc_path, base_dir=None):
 
 
     print(warc_path)
-    print(warc_path)
     # ファイル関連の処理
     os.makedirs(base_dir, exist_ok=True)
-    # パス関連の処理
-    file_name = os.path.basename(warc_path)
-    base_name = os.path.splitext(file_name)[0]
-    file_base_name = "_".join(base_name.split("_")[2:])
-    if base_dir is None:
-        base_dir = "/tmp/"
-    save_gz_path = f"{base_dir}/{file_base_name}_japanese.json.gz"
+
     try:
         tag_records = extract_japanese_from_warc(warc_path)
         is_error = False
@@ -224,12 +227,26 @@ def download_and_parse(cc_path, base_dir=None):
       "warc_path" : warc_path,
       "error_text" : error_text
     }
-    with gzip.open(save_gz_path, 'wt', encoding="utf-8") as zipfile:
-       json.dump(save_dict, zipfile, indent=2, ensure_ascii=False)
+    return save_dict
+    # with gzip.open(save_gz_path, 'wt', encoding="utf-8") as zipfile:
+    #    json.dump(save_dict, zipfile, indent=2, ensure_ascii=False)
+class TagRecord(BaseModel):
+    record_id: int
+    url:str
+    title: str
+    timestamp: datetime
+    text: List[Tuple[str, str]]
+
+
+class SaveDict(BaseModel):
+    tag_records: List[TagRecord]
+    is_error: bool
+    cc_path: str
+    warc_path: str
+    error_text: str
 
 
 def curation(batch_number, submit_dir="/content/submit", is_debug=False):
-    s3_bucket_name = os.environ.get('S3_BUCKET_NAME')
     cc_path_list = get_cc_path_list()
     if is_debug:
         n_batch = 1
@@ -238,18 +255,50 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
     start_idx, end_idx = batch_number * n_batch, (batch_number+1) * n_batch
     target_path_list  = cc_path_list[start_idx:end_idx]
     for cc_path in tqdm(target_path_list):
-        download_and_parse(cc_path, f"process/batch{batch_number}")
-    shutil.make_archive(f'{submit_dir}/{batch_number}',
-                        format='zip', root_dir=f"process/batch{batch_number}")
+        save_dict = download_and_parse(cc_path, f"process/batch{batch_number}")
+        print(save_dict)
+        if save_dict["is_error"]:
+            pass
+        else:
+            for tag_record in save_dict["tag_records"]:
+                title = ""
+                try:
 
-    # put_s3(s3_bucket_name, f"{submit_dir}/{batch_number}.zip", f"{batch_number}.zip")
+                    if tag_record["title"] == "":
+                        title = "no_title"
+                    else:
+                        title = tag_record["title"]
+
+                    pre_cleaned_text = tag_record["pre_cleaned_text"]
+                    record_id = tag_record["record_id"]
+                    url = tag_record["url"]
+                    timestamp = tag_record["timestamp"]
+                    html_text = tag_record["html"]
+                    warc = Warc(
+                        id=uuid.uuid4(),
+                        record_id=record_id,
+                                url=url,
+                                title=title,
+                                timestamp=timestamp,
+                                pre_cleaned_text=pre_cleaned_text,
+                                html_text=html_text,
+                                path=cc_path,
+                                batch_number=batch_number
+                    )
+
+                    print(warc)
+                    WarcRepository.save(warc)
+                except Exception as e:
+                    print(e)
+                    print("error occured at save warc")
+
+
+
+
+
     shutil.rmtree("process/")
 
 
-def put_s3(bucket_name, file_name, file_path):
-    import boto3
-    s3 = boto3.client('s3')
-    s3.upload_file(file_name, bucket_name, file_path)
 
 def main(batch_number):
     """
@@ -294,18 +343,12 @@ def main(batch_number):
     else:
         print("本番モードで実行します")
 
-    # 保存用ディレクトリの指定
-    # submit_dir = "submit"
-    # もしdriveがマウントできれば,上のsubmit_dirをコメントアウト, 以下をコードにしてください.
+
     submit_dir = "submit"
 
     # batchの番号に従って,データの処理
     curation(batch_number, submit_dir=submit_dir, is_debug=is_debug)
     print(f"batch{batch_number}の処理が完了しました")
-    put_s3(os.environ.get('S3_BUCKET_NAME'),
-           f"{submit_dir}/{batch_number}.zip", f"{batch_number}.zip")
-    print(f"{submit_dir}/{batch_number}.zipをS3にアップロードしました")
-
 
 
 class ProgressPercentage(object):
@@ -333,15 +376,13 @@ def download_warc_file_with_s3(path):
         return warc_path
 
     try:
-        s3 = boto3.client('s3')
         CC_BUCKET_NAME = "commoncrawl"
-        config = TransferConfig()
         print(f'download from s3://{CC_BUCKET_NAME}/{path} to {warc_path}')
         # s3からダウンロードする設定
         download_file_with_progress(CC_BUCKET_NAME, path, warc_path)
 
-        decompress_gz(gz_path, warc_path,
-                      remove_gz=False, fill_blank_gz=True)
+        # decompress_gz(gz_path, warc_path,
+        #               remove_gz=False, fill_blank_gz=True)
         return warc_path
     except NoCredentialsError:
         print("Credentials not available")
@@ -358,4 +399,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     print(args.batch_number)
     main(args.batch_number)
-

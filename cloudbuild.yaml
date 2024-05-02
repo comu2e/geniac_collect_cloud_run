@@ -1,0 +1,24 @@
+steps:
+  - name: "docker"
+    args:
+      [
+        "buildx",
+        "create",
+        "--driver",
+        "docker-container",
+        "--name",
+        "container",
+        "--use",
+      ]
+  - name: "docker"
+    args:
+      [
+        "buildx",
+        "build",
+        "--platform",
+        "linux/amd64",
+        "-t",
+        "us-central1-docker.pkg.dev/common-crawler-422005/crawler/crawler:latest",
+        "--push",
+        ".",
+      ]
