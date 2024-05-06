@@ -3,13 +3,14 @@
 # Cloud Runサービスの名前
 SERVICE_NAME="crawler"
 
+NUMBER=105
 # 初期のbatch_number
-BATCH_NUMBER=101
+BATCH_NUMBER=$NUMBER
 
 # サービスに渡すコンテナコマンドのベース
 
 # 100から200までのbatch_numberに対してループ
-for ((batch_number=$BATCH_NUMBER; batch_number<=$BATCH_NUMBER; batch_number++)); do
+for ((batch_number=$NUMBER; batch_number<=$NUMBER; batch_number++)); do
     # コンテナコマンドを生成
     CONTAINER_ARGS="$batch_number"
 
@@ -17,7 +18,7 @@ for ((batch_number=$BATCH_NUMBER; batch_number<=$BATCH_NUMBER; batch_number++));
     gcloud run jobs execute $SERVICE_NAME \
      --args "$CONTAINER_ARGS"  \
      --region=us-central1 \
-     --tasks=500 \
+     --tasks=50 \
      --async
     # batch_numberを1増やす
     ((BATCH_NUMBER++))

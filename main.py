@@ -21,6 +21,7 @@ import glob
 import os
 
 from src.load_warc import concat_records, concat_records
+from src.repository.failed_url import FailedUrlTables
 from src.repository.warc import Warc, WarcRepository
 from src.s3_util import download_file_with_progress
 
@@ -189,8 +190,13 @@ def download_warc_file(path):
     except Exception as e:
         print(e)
         print("fail loading "+url)
+        failed_url = FailedUrlTables(
+            id=uuid.uuid4(),
+            url=url, created_at=datetime.now(),
+            error_message=str(e)
+                                     )
+        FailedUrlTables.save(failed_url)
         return warc_path
-
 
 def download_and_parse(cc_path, base_dir=None):
     # warcファイルのダウンロード
@@ -253,7 +259,7 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
     if is_debug:
         n_batch = 1
     else:
-        n_batch = 500
+        n_batch = 1
     '''
     https://cloud.google.com/run/docs/container-contract?hl=ja
     
