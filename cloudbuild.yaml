@@ -18,7 +18,7 @@ steps:
         "--platform",
         "linux/amd64",
         "-t",
-        "us-central1-docker.pkg.dev/common-crawler-422005/crawler/crawler:latest",
+        "us-east1-docker.pkg.dev/hatakeyamallm/cloud-run-commoncrawl:latest",
         "--push",
         ".",
       ]

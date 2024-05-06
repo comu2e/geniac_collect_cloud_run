@@ -9,7 +9,6 @@ from typing import List, Dict, Union, Tuple
 import requests
 import argparse
 
-from botocore.exceptions import NoCredentialsError
 import sys
 
 import threading
@@ -18,13 +17,12 @@ from pydantic import BaseModel
 from warcio.archiveiterator import ArchiveIterator
 from bs4 import BeautifulSoup
 from tqdm import tqdm
-import json
 import glob
 import os
 
 from src.load_warc import concat_records, concat_records
 from src.repository.warc import Warc, WarcRepository
-from src.s3_util import download_file_with_progress,put_s3
+from src.s3_util import download_file_with_progress
 
 base_url = "https://data.commoncrawl.org/"
 os.makedirs("tmp/data/gz", exist_ok=True)
@@ -126,46 +124,50 @@ def extract_japanese_from_warc(path,
     record_id = 0
     with open(path, 'rb') as stream:
         for record in tqdm(ArchiveIterator(stream)):
-            record_id += 1
-            if record_id <= fin_record_id:
-                continue
-            if record.rec_type == 'response':
-                if record.http_headers.get_header('Content-Type') == 'text/html':
-                    content = record.content_stream().read()
+            try:
+                record_id += 1
+                if record_id <= fin_record_id:
+                    continue
+                if record.rec_type == 'response':
+                    if record.http_headers.get_header('Content-Type') == 'text/html':
+                        content = record.content_stream().read()
 
-                    PARSER_TYPE = os.environ.get("PARSER_TYPE", "html.parser")
-                    if PARSER_TYPE == "lxml":
-                        soup = BeautifulSoup(content, 'lxml')
-                    elif PARSER_TYPE == "html":
-                        soup = BeautifulSoup(content, 'html.parser')
-                    else:
-                        raise ValueError(
-                            "PARSER_TYPE is not defined.please set environment PARSER_TYPE=lxml.parser or html.parser")
-                    # <html>タグからlang属性を取得
-                    html_tag = soup.find('html')
-                    if html_tag and html_tag.has_attr('lang'):
-                        lang = html_tag['lang']
-                        texts = pre_clean(soup)
-                        pre_cleaned_text = concat_records(texts)
-                        if len(texts) == 0:
-                            continue
-                        if lang == "ja":
-                            if soup.title is not None:
-                                title = soup.title.string
-                            else:
-                                title = ""
-                            d = {
-                                "record_id": record_id,
-                                "url": record.rec_headers.get_header('WARC-Target-URI'),
-                                "title": title,
-                                "timestamp": record.rec_headers.get_header('WARC-Date'),
-                                "pre_cleaned_text": pre_cleaned_text,
-                                # Todo:contentはそのままだと文字化けしているのでdecodeする
-                                "html": str(content.decode('utf-8', 'ignore')),
-                            }
-                            ja_soup_list.append(d)
-                        if len(ja_soup_list) > max_num:
-                            break
+                        PARSER_TYPE = os.environ.get("PARSER_TYPE", "html.parser")
+                        if PARSER_TYPE == "lxml":
+                            soup = BeautifulSoup(content, 'lxml')
+                        elif PARSER_TYPE == "html":
+                            soup = BeautifulSoup(content, 'html.parser')
+                        else:
+                            raise ValueError(
+                                "PARSER_TYPE is not defined.please set environment PARSER_TYPE=lxml.parser or html.parser")
+                        # <html>タグからlang属性を取得
+                        html_tag = soup.find('html')
+                        if html_tag and html_tag.has_attr('lang'):
+                            lang = html_tag['lang']
+                            texts = pre_clean(soup)
+                            pre_cleaned_text = concat_records(texts)
+                            if len(texts) == 0:
+                                continue
+                            if lang == "ja":
+                                if soup.title is not None:
+                                    title = soup.title.string
+                                else:
+                                    title = ""
+                                d = {
+                                    "record_id": record_id,
+                                    "url": record.rec_headers.get_header('WARC-Target-URI'),
+                                    "title": title,
+                                    "timestamp": record.rec_headers.get_header('WARC-Date'),
+                                    "pre_cleaned_text": pre_cleaned_text,
+                                    # Todo:contentはそのままだと文字化けしているのでdecodeする
+                                    "html": str(content),
+                                }
+                                ja_soup_list.append(d)
+                            if len(ja_soup_list) > max_num:
+                                break
+            except Exception as e:
+                print(e)
+                print("error occured at extract_japanese_from_warc")
     return ja_soup_list
 def download_warc_file(path):
     '''cloudfrontからHTTP経由でダウンロードする'''
@@ -251,10 +253,37 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
     if is_debug:
         n_batch = 1
     else:
-        n_batch = 10
-    start_idx, end_idx = batch_number * n_batch, (batch_number+1) * n_batch
+        n_batch = 500
+    '''
+    https://cloud.google.com/run/docs/container-contract?hl=ja
+    
+    このタスクのインデックス。最初のタスクは 0 から始まり、タスクの最大数から 1 を引いた数まで、続けてタスクを実行するたびに 1 ずつ増えます。
+    --parallelism を 1 より大きい値に設定すると、タスクがインデックス順に開始されない場合があります。たとえば、タスク 2 をタスク 1 の前に開始できます。
+    
+    '''
+
+    # CloudRunの環境変数から取得
+    cloudrun_task_index = int(os.environ.get("CLOUD_RUN_TASK_INDEX", 0))
+    cloud_task_count = int(os.environ.get("CLOUD_RUN_TASK_COUNT", 1))
+
+
+    print(f"cloudrun_task_index: {cloudrun_task_index}")
+    print(f"cloud_task_count: {cloud_task_count}")
+
+
+    start_idx, end_idx = ( batch_number * n_batch,
+                          (batch_number+1) * n_batch)
+
+    # show example
+
     target_path_list  = cc_path_list[start_idx:end_idx]
-    for cc_path in tqdm(target_path_list):
+
+    task_path_list = target_path_list[cloudrun_task_index*n_batch//cloud_task_count:
+                                      (cloudrun_task_index+1)*n_batch//cloud_task_count]
+
+    # divide into with cloudrun_task_index
+    for cc_path in tqdm(task_path_list):
+
         save_dict = download_and_parse(cc_path, f"process/batch{batch_number}")
         print(save_dict)
         if save_dict["is_error"]:
@@ -294,10 +323,7 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
 
 
 
-
-
     shutil.rmtree("process/")
-
 
 
 def main(batch_number):
@@ -384,8 +410,7 @@ def download_warc_file_with_s3(path):
         # decompress_gz(gz_path, warc_path,
         #               remove_gz=False, fill_blank_gz=True)
         return warc_path
-    except NoCredentialsError:
-        print("Credentials not available")
+
     except Exception as e:
         print(e)
         print("fail loading " + url)
@@ -397,5 +422,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("batch_number", type=int, help="batch_number")
     args = parser.parse_args()
+
     print(args.batch_number)
     main(args.batch_number)
