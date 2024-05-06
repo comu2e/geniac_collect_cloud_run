@@ -3,14 +3,14 @@
 # Cloud Runサービスの名前
 SERVICE_NAME="crawler"
 
-NUMBER=105
+NUMBER=115
 # 初期のbatch_number
 BATCH_NUMBER=$NUMBER
 
 # サービスに渡すコンテナコマンドのベース
 
 # 100から200までのbatch_numberに対してループ
-for ((batch_number=$NUMBER; batch_number<=$NUMBER; batch_number++)); do
+for ((batch_number=$NUMBER; batch_number<=$NUMBER+85; batch_number++)); do
     # コンテナコマンドを生成
     CONTAINER_ARGS="$batch_number"
 

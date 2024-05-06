@@ -259,7 +259,7 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
     if is_debug:
         n_batch = 1
     else:
-        n_batch = 1
+        n_batch = os.environ.get("N_BATCH", 10)
     '''
     https://cloud.google.com/run/docs/container-contract?hl=ja
     
@@ -329,7 +329,6 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
 
 
 
-    shutil.rmtree("process/")
 
 
 def main(batch_number):
