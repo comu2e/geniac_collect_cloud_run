@@ -286,7 +286,9 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
 
     task_path_list = target_path_list[cloudrun_task_index*n_batch//cloud_task_count:
                                       (cloudrun_task_index+1)*n_batch//cloud_task_count]
-
+    print(task_path_list)
+    print(f"n_batch:{n_batch}個のファイルを処理します")
+    print(f"currentry processing {cloudrun_task_index*n_batch//cloud_task_count} to")
     # divide into with cloudrun_task_index
     for cc_path in tqdm(task_path_list):
 

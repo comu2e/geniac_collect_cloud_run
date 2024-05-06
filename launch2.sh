@@ -17,7 +17,7 @@ for ((batch_number=$NUMBER; batch_number<=$NUMBER; batch_number++)); do
     # ジョブを非同期で起動するコマンドを実行
     gcloud run jobs execute $SERVICE_NAME \
      --args "$CONTAINER_ARGS"  \
-     --region=us-central1 \
+     --region=us-east1 \
      --tasks=50 \
     # batch_numberを1増やす
     ((BATCH_NUMBER++))
