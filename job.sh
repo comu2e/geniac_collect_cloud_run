@@ -1,7 +1,7 @@
 #!/bin/bash
 
-BATCH=11
-sh launch2.sh $((BATCH + 1))
-sh launch_central.sh $((BATCH + 2))
-sh launch_us_central.sh $((BATCH + 3))
-sh launch_useast4.sh $((BATCH + 4))
+BATCH=20
+sh launch.sh $((BATCH + 1)) "us-east1" "crawler2"
+sh launch.sh $((BATCH + 2)) "us-central1" "crawler-uscentral"
+sh launch.sh $((BATCH + 3)) "us-west1" "crawler-uswest"
+sh launch.sh $((BATCH +4)) "us-east4" "crawler-useast4"

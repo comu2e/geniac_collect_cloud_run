@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # Cloud Runサービスの名前
-SERVICE_NAME="crawler2"
-
-NUMBER=1
+TASK_NUMBER=50
+NUMBER=$1
+REGION=$2
+SERVICE_NAME=$3
 # 初期のbatch_number
 BATCH_NUMBER=$NUMBER
 
@@ -17,8 +18,8 @@ for ((batch_number=$NUMBER; batch_number<=$NUMBER; batch_number++)); do
     # ジョブを非同期で起動するコマンドを実行
     gcloud run jobs execute $SERVICE_NAME \
      --args "$CONTAINER_ARGS"  \
-     --region=us-central1 \
-     --tasks=50 \
+     --region=$REGION \
+     --tasks=$TASK_NUMBER \
     # batch_numberを1増やす
     ((BATCH_NUMBER++))
 done
