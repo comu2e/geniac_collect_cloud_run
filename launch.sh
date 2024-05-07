@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Cloud Runサービスの名前
-TASK_NUMBER=50
 NUMBER=$1
 REGION=$2
 SERVICE_NAME=$3
+TASK_NUMBER=$4
 # 初期のbatch_number
 BATCH_NUMBER=$NUMBER
 

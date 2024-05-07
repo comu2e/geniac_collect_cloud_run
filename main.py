@@ -254,7 +254,7 @@ class SaveDict(BaseModel):
     error_text: str
 
 
-def curation(batch_number, submit_dir="/content/submit", is_debug=False):
+def curation(batch_id, submit_dir="/content/submit", is_debug=False):
     cc_path_list = get_cc_path_list()
 
     '''
@@ -272,11 +272,12 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
 
     print(f"cloudrun_task_index: {cloudrun_task_index}")
     print(f"cloud_task_count: {cloud_task_count}")
-    start_idx, end_idx = ( batch_number ,
-                          (batch_number+1))
+    start_idx, end_idx = ( batch_id ,
+                          (batch_id+1))
     # show example
     target_path_list  = cc_path_list[start_idx:end_idx]
-
+    print(f"target_path_list:{target_path_list}")
+    print(f"start_idx:{start_idx},end_idx:{end_idx}")
     # divide into with cloudrun_task_index
     for cc_path in tqdm(target_path_list):
 
@@ -429,7 +430,7 @@ if __name__ == "__main__":
     cloud_run_task = int(os.environ.get('CLOUD_RUN_TASK_INDEX'))
 
     # batch数
-    n_batch = int(os.environ.get("N_BATCH", 2))
+    n_batch = int(os.environ.get("N_BATCH", 3))
 
     # 各taskに付与するbatch_id
     batch_id = n_batch * n_task * batch_number + n_batch * cloud_run_task
