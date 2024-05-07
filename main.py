@@ -281,7 +281,7 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
     # divide into with cloudrun_task_index
     for cc_path in tqdm(target_path_list):
 
-        save_dict = download_and_parse(cc_path, f"process/batch{batch_number}")
+        save_dict = download_and_parse(cc_path, f"process/batch{batch_id}")
         print(save_dict)
         if save_dict["is_error"]:
             pass
@@ -309,7 +309,7 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
                                 pre_cleaned_text=pre_cleaned_text,
                                 html_text=html_text,
                                 path=cc_path,
-                                batch_number=batch_number
+                                batch_number=batch_id
                     )
 
                     print(warc)
