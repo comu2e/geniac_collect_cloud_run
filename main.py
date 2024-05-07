@@ -256,10 +256,7 @@ class SaveDict(BaseModel):
 
 def curation(batch_number, submit_dir="/content/submit", is_debug=False):
     cc_path_list = get_cc_path_list()
-    if is_debug:
-        n_batch = 1
-    else:
-        n_batch = os.environ.get("N_BATCH", 10)
+
     '''
     https://cloud.google.com/run/docs/container-contract?hl=ja
     
@@ -275,22 +272,13 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
 
     print(f"cloudrun_task_index: {cloudrun_task_index}")
     print(f"cloud_task_count: {cloud_task_count}")
-
-
-    start_idx, end_idx = ( batch_number * n_batch,
-                          (batch_number+1) * n_batch)
-
+    start_idx, end_idx = ( batch_number ,
+                          (batch_number+1))
     # show example
-
     target_path_list  = cc_path_list[start_idx:end_idx]
 
-    task_path_list = target_path_list[cloudrun_task_index*n_batch//cloud_task_count:
-                                      (cloudrun_task_index+1)*n_batch//cloud_task_count]
-    print(task_path_list)
-    print(f"n_batch:{n_batch}個のファイルを処理します")
-    print(f"currentry processing {cloudrun_task_index*n_batch//cloud_task_count} to")
     # divide into with cloudrun_task_index
-    for cc_path in tqdm(task_path_list):
+    for cc_path in tqdm(target_path_list):
 
         save_dict = download_and_parse(cc_path, f"process/batch{batch_number}")
         print(save_dict)
@@ -333,7 +321,7 @@ def curation(batch_number, submit_dir="/content/submit", is_debug=False):
 
 
 
-def main(batch_number):
+def main(batch_id):
     """
     download path list from commoncrawl
     """
@@ -361,27 +349,30 @@ def main(batch_number):
         except:
             pass
     # Process
-    # 保存されているwarcファイルのパスのリストを取得
-    cc_paths = get_cc_path_list(path_dir="data/path_list/*")
-    # 表示
-    # ここの番号を指定を受けた番号に変更をしてください
-    # is_debug = True
-    is_debug = os.environ.get('IS_DEBUG', "False")
-    if is_debug == "True":
-        is_debug = True
-    else:
-        is_debug = False
-    if is_debug:
-        print("デバッグモードで実行します")
-    else:
-        print("本番モードで実行します")
+    try:
+        # 保存されているwarcファイルのパスのリストを取得
+        cc_paths = get_cc_path_list(path_dir="data/path_list/*")
+        # 表示
+        # ここの番号を指定を受けた番号に変更をしてください
+        # is_debug = True
+        is_debug = os.environ.get('IS_DEBUG', "False")
+        if is_debug == "True":
+            is_debug = True
+        else:
+            is_debug = False
+        if is_debug:
+            print("デバッグモードで実行します")
+        else:
+            print("本番モードで実行します")
 
 
-    submit_dir = "submit"
+        submit_dir = "submit"
 
-    # batchの番号に従って,データの処理
-    curation(batch_number, submit_dir=submit_dir, is_debug=is_debug)
-    print(f"batch{batch_number}の処理が完了しました")
+        # batchの番号に従って,データの処理
+        curation(batch_id, submit_dir=submit_dir, is_debug=is_debug)
+        print(f"batch{batch_id}の処理が完了しました")
+    except Exception as e:
+        print(e)
 
 
 class ProgressPercentage(object):
@@ -413,6 +404,7 @@ def download_warc_file_with_s3(path):
         print(f'download from s3://{CC_BUCKET_NAME}/{path} to {warc_path}')
         # s3からダウンロードする設定
         download_file_with_progress(CC_BUCKET_NAME, path, warc_path)
+        print(f'warc:{ warc_path}のダウンロードが完了しました')
 
         # decompress_gz(gz_path, warc_path,
         #               remove_gz=False, fill_blank_gz=True)
@@ -429,6 +421,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("batch_number", type=int, help="batch_number")
     args = parser.parse_args()
+    batch_number = int(args.batch_number)
 
-    print(args.batch_number)
-    main(args.batch_number)
+    # Cloud run のtask数
+    n_task = int(os.environ.get("CLOUD_RUN_TASK_COUNT",1))
+    # Cloud run のindex
+    cloud_run_task = int(os.environ.get('CLOUD_RUN_TASK_INDEX'))
+
+    # batch数
+    n_batch = int(os.environ.get("N_BATCH", 2))
+
+    # 各taskに付与するbatch_id
+    batch_id = n_batch * n_task * batch_number + n_batch * cloud_run_task
+
+    print(f"cloudrun idx is {cloud_run_task}, cloud run task is {n_task},"
+          f"n_batch is {n_batch}")
+    print(f"batch_id is {batch_id}")
+    main(batch_id)

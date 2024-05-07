@@ -1,8 +1,11 @@
 #!/bin/bash
 
+
+#!/bin/bash
+
 # Cloud Runサービスの名前
-SERVICE_NAME="crawler2"
-REGION="us-east1"
+SERVICE_NAME="crawler-uscentral"
+REGION="us-central1"
 TASK_NUMBER=50
 NUMBER=$1
 # 初期のbatch_number

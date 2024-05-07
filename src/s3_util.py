@@ -18,7 +18,10 @@ def download_file_with_progress(bucket_name, path, destination_filename):
     s3 = session.client('s3')
 
     # tqdmを使ってプログレスバーを表示しながらファイルをダウンロード
-    s3.download_file(bucket_name, path, destination_filename)
-
+    try:
+        s3.download_file(bucket_name, path, destination_filename)
+        print(f'{ destination_filename}のダウンロードが完了しました')
+    except Exception as e:
+        print(e)
 
 
