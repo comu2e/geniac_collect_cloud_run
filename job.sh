@@ -6,7 +6,8 @@
 
 REGIONS=("us-east1" "us-central1" "us-west1" "us-east4")
 NAMES=("crawler2" "crawler-uscentral" "crawler-uswest" "crawler-useast4")
-TASK=(80 250 80 80)
+#TASK=(80 250 80 80)
+TASK=(1 1 1 1)
 
 # launch関数
 launch() {
