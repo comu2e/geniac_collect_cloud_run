@@ -12,7 +12,7 @@ class CounterTable(Base):
     path = Column(String)
     ja_count= Column(Integer)
     all_count = Column(Integer)
-
+    meta_ja_count=Column(Integer)
 
 
     @staticmethod

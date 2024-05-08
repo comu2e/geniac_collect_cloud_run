@@ -20,7 +20,7 @@ launch() {
 }
 
 # 100から2002までループし、各バッチでリージョンと名前を繰り返す
-BATCH_START=20
+BATCH_START=25
 BATCH_END=25
 region_count=${#REGIONS[@]}
 

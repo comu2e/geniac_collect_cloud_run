@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 import gzip
+import json
 import shutil
 import uuid
 from datetime import datetime
@@ -30,8 +31,8 @@ base_url = "https://data.commoncrawl.org/"
 os.makedirs("tmp/data/gz", exist_ok=True)
 os.makedirs("tmp/data/warc", exist_ok=True)
 
-def download_file(url, save_path):
 
+def download_file(url, save_path):
     response = requests.get(url, stream=True)
 
     if response.status_code == 200:
@@ -41,7 +42,6 @@ def download_file(url, save_path):
         print(f"ファイルが正常にダウンロードされました: {save_path}")
     else:
         print(f"ファイルのダウンロードに失敗しました。ステータスコード: {response.status_code}")
-
 
 
 def decompress_gz(gz_path, output_path, remove_gz=True, fill_blank_gz=False):
@@ -55,6 +55,7 @@ def decompress_gz(gz_path, output_path, remove_gz=True, fill_blank_gz=False):
     if fill_blank_gz:
         with open(gz_path, 'w') as f:
             f.write("")
+
 
 def get_cc_path_list(path_dir="data/path_list/*"):
     path_list = []
@@ -71,13 +72,12 @@ def get_cc_path_list(path_dir="data/path_list/*"):
 
 
 def cc_path_to_urls(cc_path):
-    url = base_url+cc_path
+    url = base_url + cc_path
     filename = cc_path.replace("/", "_")
     gz_path = f"tmp/data/gz/{filename}"
     warc_path = f"tmp/data/warc/{filename}".replace(".gz", "")
 
     return url, gz_path, warc_path
-
 
 
 def halfwidth_ratio(s):
@@ -86,8 +86,8 @@ def halfwidth_ratio(s):
     halfwidth_count = sum(
         1 for char in s
         if '\u0020' <= char <= '\u007E' or  # 基本的なASCII範囲
-           '\uFF61' <= char <= '\uFF9F' or  # 半角カタカナ
-           char in ('\u0009', '\u000A', '\u000D')  # タブ、改行、復帰
+        '\uFF61' <= char <= '\uFF9F' or  # 半角カタカナ
+        char in ('\u0009', '\u000A', '\u000D')  # タブ、改行、復帰
     )
     return halfwidth_count / len(s)
 
@@ -109,7 +109,7 @@ def pre_clean(soup):
 
 def extract_japanese_from_warc(path,
                                save_dir="json",
-                               max_num=10**10,
+                               max_num=10 ** 10,
                                ):
     ja_soup_list = []
     path = path.replace("\\", "/")  # for windows env
@@ -127,10 +127,24 @@ def extract_japanese_from_warc(path,
     # どれだけjaの数をしたか
     ja_count = 0
     all_count = 0
-
+    meta_ja_count = 0
     with open(path, 'rb') as stream:
         for record in tqdm(ArchiveIterator(stream)):
             all_count += 1
+
+            if record.rec_type == "metadata":
+                try:
+                    metadata = record.content_stream().read().decode("utf-8")
+                    metadata_json_str = metadata.split('languages-cld2: ')[1]
+                    metadata_dict = json.loads(metadata_json_str)
+                    # metadataから言語情報を取得する
+                    code = metadata_dict['languages'][0]['code']
+                    print(metadata_dict)
+                    print(f"metadata-dict:{metadata_dict}")
+                    print(f"code is {code}")
+                except Exception as e:
+                    print(e)
+
             try:
                 record_id += 1
                 if record_id <= fin_record_id:
@@ -155,7 +169,7 @@ def extract_japanese_from_warc(path,
                             pre_cleaned_text = concat_records(texts)
                             if len(texts) == 0:
                                 continue
-                            if lang == "ja":
+                            if lang == "ja" or code == "ja":
                                 if soup.title is not None:
                                     title = soup.title.string
                                 else:
@@ -170,8 +184,12 @@ def extract_japanese_from_warc(path,
                                     "html": str(content),
                                 }
                                 # 日本語判定したら追加
-                                ja_count += 1
+
                                 ja_soup_list.append(d)
+                                if lang == 'ja':
+                                    ja_count += 1
+                                if code == "ja":
+                                    meta_ja_count += 1
                             if len(ja_soup_list) > max_num:
                                 break
             except Exception as e:
@@ -179,13 +197,16 @@ def extract_japanese_from_warc(path,
                 print("error occured at extract_japanese_from_warc")
 
         counter = Counter(
-                id=uuid.uuid4(),
-                path=path,
-                all_count=all_count,
-                ja_count=ja_count
-            )
+            id=uuid.uuid4(),
+            path=path,
+            all_count=all_count,
+            ja_count=ja_count,
+            meta_ja_count=meta_ja_count
+        )
         CounterRepository.save(counter)
     return ja_soup_list
+
+
 def download_warc_file(path):
     '''cloudfrontからHTTP経由でダウンロードする'''
     url, gz_path, warc_path = cc_path_to_urls(path)
@@ -197,22 +218,23 @@ def download_warc_file(path):
         if os.path.exists(gz_path):
             print(f"gz_pathがすでに存在します: {gz_path}")
         else:
-            print("downloading "+url)
+            print("downloading " + url)
             download_file(url, gz_path)
-        print("decompressing "+gz_path)
+        print("decompressing " + gz_path)
         decompress_gz(gz_path, warc_path,
                       remove_gz=False, fill_blank_gz=True)
         return warc_path
     except Exception as e:
         print(e)
-        print("fail loading "+url)
+        print("fail loading " + url)
         failed_url = FailedUrlTables(
             id=uuid.uuid4(),
             url=url, created_at=datetime.now(),
             error_message=str(e)
-                                     )
+        )
         FailedUrlTables.save(failed_url)
         return warc_path
+
 
 def download_and_parse(cc_path, base_dir=None):
     # warcファイルのダウンロード
@@ -228,7 +250,6 @@ def download_and_parse(cc_path, base_dir=None):
         warc_path = download_warc_file_with_s3(cc_path)
     else:
         raise ValueError("DOWNLOAD_MODE is not defined.please set environment DOWNLOAD_MODE=http or s3")
-
 
     print(warc_path)
     # ファイル関連の処理
@@ -246,21 +267,24 @@ def download_and_parse(cc_path, base_dir=None):
         error_text = str(e)
     # 保存用のdictを作製
     save_dict = {
-      "tag_records" : tag_records,
-      "is_error" : is_error,
-      "cc_path" : cc_path,
-      "warc_path" : warc_path,
-      "error_text" : error_text
+        "tag_records": tag_records,
+        "is_error": is_error,
+        "cc_path": cc_path,
+        "warc_path": warc_path,
+        "error_text": error_text
     }
     # delete warc path file
     # file容量開けるため
+    print(f'remove {warc_path}')
     os.remove(warc_path)
     return save_dict
     # with gzip.open(save_gz_path, 'wt', encoding="utf-8") as zipfile:
     #    json.dump(save_dict, zipfile, indent=2, ensure_ascii=False)
+
+
 class TagRecord(BaseModel):
     record_id: int
-    url:str
+    url: str
     title: str
     timestamp: datetime
     text: List[Tuple[str, str]]
@@ -289,23 +313,20 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
     cloudrun_task_index = int(os.environ.get("CLOUD_RUN_TASK_INDEX", 0))
     cloud_task_count = int(os.environ.get("CLOUD_RUN_TASK_COUNT", 1))
 
-
     # batch数
     n_batch = int(os.environ.get("N_BATCH", 3))
-
 
     print(f"cloudrun_task_index: {cloudrun_task_index}")
     print(f"cloud_task_count: {cloud_task_count}")
     # Todo:確認
-    start_idx, end_idx = ( batch_id * n_batch ,
-                          (batch_id+1) * n_batch)
+    start_idx, end_idx = (batch_id * n_batch,
+                          (batch_id + 1) * n_batch)
     # show example
-    target_path_list  = cc_path_list[start_idx:end_idx]
+    target_path_list = cc_path_list[start_idx:end_idx]
     print(f"target_path_list:{target_path_list}")
     print(f"start_idx:{start_idx},end_idx:{end_idx}")
     # divide into with cloudrun_task_index
     for cc_path in tqdm(target_path_list):
-
 
         save_dict = download_and_parse(cc_path, f"process/batch{batch_id}")
         print(save_dict)
@@ -329,13 +350,13 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
                     warc = Warc(
                         id=uuid.uuid4(),
                         record_id=record_id,
-                                url=url,
-                                title=title,
-                                timestamp=timestamp,
-                                pre_cleaned_text=pre_cleaned_text,
-                                html_text=html_text,
-                                path=cc_path,
-                                batch_number=batch_id
+                        url=url,
+                        title=title,
+                        timestamp=timestamp,
+                        pre_cleaned_text=pre_cleaned_text,
+                        html_text=html_text,
+                        path=cc_path,
+                        batch_number=batch_id
                     )
 
                     print(warc)
@@ -346,6 +367,7 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
                     print("error occured at save warc")
 
             #
+
 
 def main(batch_id):
     """
@@ -365,13 +387,13 @@ def main(batch_id):
     # Process
     # Parameterで指定したURLからパス(gz)をダウンロードし,解凍する
     for url in path_urls:
-        file_name = url.split("/")[-2]+".gz"
+        file_name = url.split("/")[-2] + ".gz"
         try:
             # パスリストが格納されているgzファイルをdata_list配下に保存
             download_file(url, f"data/path_list/{file_name}")
             # 保存されたgzファイルを解凍する
             decompress_gz(f"data/path_list/{file_name}",
-                        f"data/path_list/{os.path.splitext(file_name)[0]}")
+                          f"data/path_list/{os.path.splitext(file_name)[0]}")
 
 
         except:
@@ -392,7 +414,6 @@ def main(batch_id):
             print("デバッグモードで実行します")
         else:
             print("本番モードで実行します")
-
 
         submit_dir = "submit"
 
@@ -420,6 +441,7 @@ class ProgressPercentage(object):
                     percentage))
             sys.stdout.flush()
 
+
 def download_warc_file_with_s3(path):
     url, gz_path, warc_path = cc_path_to_urls(path)
 
@@ -432,7 +454,7 @@ def download_warc_file_with_s3(path):
         print(f'download from s3://{CC_BUCKET_NAME}/{path} to {warc_path}')
         # s3からダウンロードする設定
         download_file_with_progress(CC_BUCKET_NAME, path, warc_path)
-        print(f'warc:{ warc_path}のダウンロードが完了しました')
+        print(f'warc:{warc_path}のダウンロードが完了しました')
 
         # decompress_gz(gz_path, warc_path,
         #               remove_gz=False, fill_blank_gz=True)
@@ -444,7 +466,6 @@ def download_warc_file_with_s3(path):
         return warc_path
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("batch_number", type=int, help="batch_number")
@@ -452,12 +473,12 @@ if __name__ == "__main__":
     batch_number = int(args.batch_number)
 
     # Cloud run のtask数
-    n_task = int(os.environ.get("CLOUD_RUN_TASK_COUNT",1))
+    n_task = int(os.environ.get("CLOUD_RUN_TASK_COUNT", 1))
     # Cloud run のindex
     cloud_run_task = int(os.environ.get('CLOUD_RUN_TASK_INDEX'))
     # 各taskに付与するbatch_id
     # Todo:確認
-    batch_id =  n_task * batch_number +  cloud_run_task
+    batch_id = n_task * batch_number + cloud_run_task
 
     print(f"cloudrun idx is {cloud_run_task}, cloud run task is {n_task},")
     print(f"batch_id is {batch_id}")

@@ -12,6 +12,7 @@ class Counter(BaseModel):
     id: UUID4
     path:str
     ja_count:int
+    meta_ja_count:int
     all_count:int
 
 
