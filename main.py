@@ -124,8 +124,13 @@ def extract_japanese_from_warc(path,
         fin_record_id = 0
     # WARCファイルを開く
     record_id = 0
+    # どれだけjaの数をしたか
+    ja_count = 0
+    all_count = 0
+
     with open(path, 'rb') as stream:
         for record in tqdm(ArchiveIterator(stream)):
+            all_count += 1
             try:
                 record_id += 1
                 if record_id <= fin_record_id:
@@ -164,12 +169,22 @@ def extract_japanese_from_warc(path,
                                     # Todo:contentはそのままだと文字化けしているのでdecodeする
                                     "html": str(content),
                                 }
+                                # 日本語判定したら追加
+                                ja_count += 1
                                 ja_soup_list.append(d)
                             if len(ja_soup_list) > max_num:
                                 break
             except Exception as e:
                 print(e)
                 print("error occured at extract_japanese_from_warc")
+
+        counter = Counter(
+                id=uuid.uuid4(),
+                path=path,
+                all_count=all_count,
+                ja_count=ja_count
+            )
+        CounterRepository.save(counter)
     return ja_soup_list
 def download_warc_file(path):
     '''cloudfrontからHTTP経由でダウンロードする'''
@@ -290,9 +305,7 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
     print(f"start_idx:{start_idx},end_idx:{end_idx}")
     # divide into with cloudrun_task_index
     for cc_path in tqdm(target_path_list):
-        # どれだけjaの数をしたか
-        ja_count = 0
-        all_count=0
+
 
         save_dict = download_and_parse(cc_path, f"process/batch{batch_id}")
         print(save_dict)
@@ -325,25 +338,14 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
                                 batch_number=batch_id
                     )
 
-
-
                     print(warc)
                     WarcRepository.save(warc)
 
-                    ja_count += 1
-                    all_count += 1
                 except Exception as e:
                     print(e)
                     print("error occured at save warc")
-                    all_count += 1
-            counter = Counter(
-                id=uuid.uuid4(),
-                path=cc_path,
-                all_count=all_count,
-                ja_count=ja_count
-            )
-            CounterRepository.save(counter)
 
+            #
 
 def main(batch_id):
     """
