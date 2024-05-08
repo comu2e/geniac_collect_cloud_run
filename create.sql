@@ -26,6 +26,13 @@ create table failed_urls
     error       text
 );
 
+CREATE TABLE my_table (
+    id UUID PRIMARY KEY,
+    path VARCHAR(255),
+    ja_count INTEGER,
+    all_count INTEGER
+);
+
 alter table warcs
     owner to app;
 

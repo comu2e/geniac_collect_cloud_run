@@ -21,6 +21,7 @@ import glob
 import os
 
 from src.load_warc import concat_records, concat_records
+from src.repository.counter_ja import Counter, CounterRepository
 from src.repository.failed_url import FailedUrlTables
 from src.repository.warc import Warc, WarcRepository
 from src.s3_util import download_file_with_progress
@@ -220,6 +221,7 @@ def download_and_parse(cc_path, base_dir=None):
 
     try:
         tag_records = extract_japanese_from_warc(warc_path)
+
         is_error = False
         error_text = ""
     except Exception as e:
@@ -235,6 +237,9 @@ def download_and_parse(cc_path, base_dir=None):
       "warc_path" : warc_path,
       "error_text" : error_text
     }
+    # delete warc path file
+    # file容量開けるため
+    os.remove(warc_path)
     return save_dict
     # with gzip.open(save_gz_path, 'wt', encoding="utf-8") as zipfile:
     #    json.dump(save_dict, zipfile, indent=2, ensure_ascii=False)
@@ -270,16 +275,24 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
     cloud_task_count = int(os.environ.get("CLOUD_RUN_TASK_COUNT", 1))
 
 
+    # batch数
+    n_batch = int(os.environ.get("N_BATCH", 3))
+
+
     print(f"cloudrun_task_index: {cloudrun_task_index}")
     print(f"cloud_task_count: {cloud_task_count}")
-    start_idx, end_idx = ( batch_id ,
-                          (batch_id+1))
+    # Todo:確認
+    start_idx, end_idx = ( batch_id * n_batch ,
+                          (batch_id+1) * n_batch)
     # show example
     target_path_list  = cc_path_list[start_idx:end_idx]
     print(f"target_path_list:{target_path_list}")
     print(f"start_idx:{start_idx},end_idx:{end_idx}")
     # divide into with cloudrun_task_index
     for cc_path in tqdm(target_path_list):
+        # どれだけjaの数をしたか
+        ja_count = 0
+        all_count=0
 
         save_dict = download_and_parse(cc_path, f"process/batch{batch_id}")
         print(save_dict)
@@ -312,14 +325,24 @@ def curation(batch_id, submit_dir="/content/submit", is_debug=False):
                                 batch_number=batch_id
                     )
 
+
+
                     print(warc)
                     WarcRepository.save(warc)
+
+                    ja_count += 1
+                    all_count += 1
                 except Exception as e:
                     print(e)
                     print("error occured at save warc")
-
-
-
+                    all_count += 1
+            counter = Counter(
+                id=uuid.uuid4(),
+                path=cc_path,
+                all_count=all_count,
+                ja_count=ja_count
+            )
+            CounterRepository.save(counter)
 
 
 def main(batch_id):
@@ -347,6 +370,8 @@ def main(batch_id):
             # 保存されたgzファイルを解凍する
             decompress_gz(f"data/path_list/{file_name}",
                         f"data/path_list/{os.path.splitext(file_name)[0]}")
+
+
         except:
             pass
     # Process
@@ -428,14 +453,10 @@ if __name__ == "__main__":
     n_task = int(os.environ.get("CLOUD_RUN_TASK_COUNT",1))
     # Cloud run のindex
     cloud_run_task = int(os.environ.get('CLOUD_RUN_TASK_INDEX'))
-
-    # batch数
-    n_batch = int(os.environ.get("N_BATCH", 3))
-
     # 各taskに付与するbatch_id
-    batch_id = n_batch * n_task * batch_number + n_batch * cloud_run_task
+    # Todo:確認
+    batch_id =  n_task * batch_number +  cloud_run_task
 
-    print(f"cloudrun idx is {cloud_run_task}, cloud run task is {n_task},"
-          f"n_batch is {n_batch}")
+    print(f"cloudrun idx is {cloud_run_task}, cloud run task is {n_task},")
     print(f"batch_id is {batch_id}")
     main(batch_id)
