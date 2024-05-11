@@ -24,17 +24,17 @@ done < "$file"
 # チャンクの数を指定
 chunk_size=4
 REGIONS=( "us-central1" "us-east1" "us-west1" "us-east4")
-NAMES=("crawler-uscentral" "crawler2" "crawler-uswest" "crawler-useast4" )
+JOB_NAMES=("crawler-uscentral" "crawler2" "crawler-uswest" "crawler-useast4" )
 #TASK=(80 250 80 80)
 TASK=(10 10 10 10)
 launch() {
     local target_batch_list=$1
     local region=$2
-    local name=$3
+    local job_name=$3
     local task=$4
-    echo "$target_batch_list" "$region" "$name" "$task"
+    echo "$target_batch_list" "$region" "$job_name" "$task"
 
-    sh launch.sh "$target_batch_list" "$region" "$name" "$task"
+    sh launch.sh "$target_batch_list" "$region" "$job_name" "$task"
 }
 
 # 読み込んだデータをn個のjobに分割
@@ -42,7 +42,7 @@ total_lines=${#lines[@]}
 job_size=$(( (total_lines +chunk_size - 1) / chunk_size ))  # 切り上げ計算
 
 # 各チャンクを処理
-for (( i=0; i<total_lines; i+=job_size )); do
+for (( i=0; i<total_lines; i+=chunk_size )); do
     job=("${lines[@]:i:job_size}")
 
     # chunk内の各要素に対してクォーテーションを付けて、カンマで結合し、全体をブラケットで囲む
@@ -51,9 +51,10 @@ for (( i=0; i<total_lines; i+=job_size )); do
     joined_chunk="${joined_chunk%,}"
     target_batch_list="[$joined_chunk]"
 
-#    launch "$target_batch_list" "${REGIONS[$job_index]}" "${NAMES[$job_index]}" "${TASK[$job_index]}"
+#    launch "$target_batch_list" "${REGIONS[$job_index]}" "${JOB_NAMES[$job_index]}" "${TASK[$job_index]}"
 #Todo fix this
-python main.py "$target_batch_list" "${REGIONS[$job_index]}" "${NAMES[$job_index]}" "${TASK[$job_index]}"
-
+#python main.py "$target_batch_list" "${REGIONS[$job_index]}" "${JOB_NAMES[$job_index]}" "${TASK[$job_index]}"
+#echo "$target_batch_list" "${REGIONS[$job_index]}" "${JOB_NAMES[$job_index]}" "${TASK[$job_index]}"
+python main.py "$target_batch_list" 1
 
 done

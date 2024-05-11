@@ -381,7 +381,8 @@ def main(target_path_list):
     target_path_list = ast.literal_eval(args.target_path_list)
 
     d = target_path_list[cloud_run_task_idx*1:cloud_run_task_idx*1+n_batch]
-    print(d)
+    print(len(d))
+
 
 if __name__ == "__main__":
     time_to_sleep = random.randint(2, 5)
