@@ -50,6 +50,6 @@ class Config:
 
 
 # 使用例
-config = Config()
-print("Is test ?", config.is_test)
-print(config.db_path)
+# config = Config()
+# print("Is test ?", config.is_test)
+# print(config.db_path)

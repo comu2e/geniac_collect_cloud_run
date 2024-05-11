@@ -1,30 +1,34 @@
 #! /usr/bin/env python
 
 import gzip
-import json
 import shutil
 import uuid
 from datetime import datetime
-from typing import List, Dict, Union, Tuple
+import random
+from typing import List,  Tuple
+
+import trafilatura
+from langdetect import detect
+import time
 
 import requests
 import argparse
 
-import sys
-
-import threading
 
 from pydantic import BaseModel
-from warcio.archiveiterator import ArchiveIterator
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 import glob
 import os
 
+from warcio import ArchiveIterator
+
+from src.bq import put_bq_warcs, put_bq_failed_urls
 from src.load_warc import concat_records, concat_records
-from src.repository.counter_ja import Counter, CounterRepository
-from src.repository.failed_url import FailedUrlTables
-from src.repository.warc import Warc, WarcRepository
+from src.model.failed_warcs import FailedWarc
+
+from src.model.warc import Warc
+from src.retry import retry_decorator
 from src.s3_util import download_file_with_progress
 
 base_url = "https://data.commoncrawl.org/"
@@ -57,7 +61,7 @@ def decompress_gz(gz_path, output_path, remove_gz=True, fill_blank_gz=False):
             f.write("")
 
 
-def get_cc_path_list(path_dir="data/path_list/*"):
+def get_cc_path_list(path_dir="data/rest_path_list/*"):
     path_list = []
     for file_path in glob.glob(path_dir):
         print(file_path)
@@ -106,6 +110,9 @@ def pre_clean(soup):
             texts_with_tags.append((item, tag.name))  # テキストとタグの名前をタプルとして追加
     return texts_with_tags
 
+def contains_hiragana(text: str) -> bool:
+    return any("\u3040" <= char <= "\u309F" for char in text)
+
 
 def extract_japanese_from_warc(path,
                                save_dir="json",
@@ -125,26 +132,11 @@ def extract_japanese_from_warc(path,
     # WARCファイルを開く
     record_id = 0
     # どれだけjaの数をしたか
-    ja_count = 0
-    all_count = 0
-    meta_ja_count = 0
     with open(path, 'rb') as stream:
         for record in tqdm(ArchiveIterator(stream)):
-            all_count += 1
-
-            if record.rec_type == "metadata":
-                try:
-                    metadata = record.content_stream().read().decode("utf-8")
-                    metadata_json_str = metadata.split('languages-cld2: ')[1]
-                    metadata_dict = json.loads(metadata_json_str)
-                    # metadataから言語情報を取得する
-                    code = metadata_dict['languages'][0]['code']
-                    print(metadata_dict)
-                    print(f"metadata-dict:{metadata_dict}")
-                    print(f"code is {code}")
-                except Exception as e:
-                    print(e)
-
+            url = record.rec_headers.get_header("WARC-Target-URI")
+            if url is None:
+                continue
             try:
                 record_id += 1
                 if record_id <= fin_record_id:
@@ -153,60 +145,51 @@ def extract_japanese_from_warc(path,
                     if record.http_headers.get_header('Content-Type') == 'text/html':
                         content = record.content_stream().read()
 
-                        PARSER_TYPE = os.environ.get("PARSER_TYPE", "html.parser")
-                        if PARSER_TYPE == "lxml":
-                            soup = BeautifulSoup(content, 'lxml')
-                        elif PARSER_TYPE == "html":
-                            soup = BeautifulSoup(content, 'html.parser')
-                        else:
-                            raise ValueError(
-                                "PARSER_TYPE is not defined.please set environment PARSER_TYPE=lxml.parser or html.parser")
-                        # <html>タグからlang属性を取得
-                        html_tag = soup.find('html')
-                        if html_tag and html_tag.has_attr('lang'):
-                            lang = html_tag['lang']
-                            texts = pre_clean(soup)
-                            pre_cleaned_text = concat_records(texts)
-                            if len(texts) == 0:
-                                continue
-                            if lang == "ja" or code == "ja":
+                        soup = BeautifulSoup(content, 'lxml')
+                                    # 画像やpdfは除外
+                        if url.endswith(".pdf") or url.endswith(".jpg") or url.endswith(".png") or url.endswith(
+                                ".jpeg"):
+                            continue
+                        # 日本語が含まれているかどうか
+                        if contains_hiragana(content.decode("utf-8", errors="ignore")):
+                            extracted_text = trafilatura.extract(content.decode("utf-8", errors="ignore"),
+                                                                 include_formatting=True)
+                            if extracted_text is not None and contains_hiragana(extracted_text):
+                                texts = pre_clean(soup)
+                                pre_cleaned_text = concat_records(texts)
+
+                                if len(texts) == 0:
+                                    continue
+
                                 if soup.title is not None:
-                                    title = soup.title.string
+                                    title = soup.find('title').text
                                 else:
-                                    title = ""
+                                    title = "no_title"
+
                                 d = {
-                                    "record_id": record_id,
-                                    "url": record.rec_headers.get_header('WARC-Target-URI'),
-                                    "title": title,
-                                    "timestamp": record.rec_headers.get_header('WARC-Date'),
-                                    "pre_cleaned_text": pre_cleaned_text,
-                                    # Todo:contentはそのままだと文字化けしているのでdecodeする
-                                    "html": str(content),
-                                }
-                                # 日本語判定したら追加
+                                        "record_id": record_id,
+                                        "url": record.rec_headers.get_header('WARC-Target-URI'),
+                                        "title": title,
+                                        # "timestamp": record.rec_headers.get_header('WARC-Date'),
+                                        "pre_cleaned_text": pre_cleaned_text,
+                                        # Todo:contentはそのままだと文字化けしているのでdecodeする
+                                        "html": str(content),
+                                        "trafilatura_content": str(extracted_text)
+                                    }
 
                                 ja_soup_list.append(d)
-                                if lang == 'ja':
-                                    ja_count += 1
-                                if code == "ja":
-                                    meta_ja_count += 1
+
                             if len(ja_soup_list) > max_num:
                                 break
             except Exception as e:
                 print(e)
                 print("error occured at extract_japanese_from_warc")
 
-        counter = Counter(
-            id=uuid.uuid4(),
-            path=path,
-            all_count=all_count,
-            ja_count=ja_count,
-            meta_ja_count=meta_ja_count
-        )
-        CounterRepository.save(counter)
+
     return ja_soup_list
 
 
+@retry_decorator(max_retries=2, delay=1)
 def download_warc_file(path):
     '''cloudfrontからHTTP経由でダウンロードする'''
     url, gz_path, warc_path = cc_path_to_urls(path)
@@ -220,34 +203,34 @@ def download_warc_file(path):
         else:
             print("downloading " + url)
             download_file(url, gz_path)
-        print("decompressing " + gz_path)
-        decompress_gz(gz_path, warc_path,
-                      remove_gz=False, fill_blank_gz=True)
         return warc_path
     except Exception as e:
         print(e)
         print("fail loading " + url)
-        failed_url = FailedUrlTables(
-            id=uuid.uuid4(),
-            url=url, created_at=datetime.now(),
-            error_message=str(e)
-        )
-        FailedUrlTables.save(failed_url)
         return warc_path
 
 
 def download_and_parse(cc_path, base_dir=None):
     # warcファイルのダウンロード
-    DOWNLOAD_MODE = os.environ.get("DOWNLOAD_MODE", "http")
-
+    # DOWNLOAD_MODE = os.environ.get("DOWNLOAD_MODE", "http")
+    DOWNLOAD_MODE = "s3"
     # download warc file
     if DOWNLOAD_MODE == "http":
         print("downloading mode with http ")
+        time.sleep(1.5)
         warc_path = download_warc_file(cc_path)
     elif DOWNLOAD_MODE == "s3":
         # awsで使用する時は環境変数にDOWNLOAD_MODE=s3を設定する。
         print("downloading mode with s3 ")
-        warc_path = download_warc_file_with_s3(cc_path)
+        try:
+            warc_path = download_warc_file_with_s3(cc_path)
+            time.sleep(1.5)
+
+        except Exception as e:
+            time.sleep(1.5)
+
+            warc_path = download_warc_file(cc_path)
+
     else:
         raise ValueError("DOWNLOAD_MODE is not defined.please set environment DOWNLOAD_MODE=http or s3")
 
@@ -298,150 +281,102 @@ class SaveDict(BaseModel):
     error_text: str
 
 
-def curation(batch_id, submit_dir="/content/submit", is_debug=False):
+def curation(batch_id,job_idx,batch_range):
     cc_path_list = get_cc_path_list()
 
-    '''
-    https://cloud.google.com/run/docs/container-contract?hl=ja
-    
-    このタスクのインデックス。最初のタスクは 0 から始まり、タスクの最大数から 1 を引いた数まで、続けてタスクを実行するたびに 1 ずつ増えます。
-    --parallelism を 1 より大きい値に設定すると、タスクがインデックス順に開始されない場合があります。たとえば、タスク 2 をタスク 1 の前に開始できます。
-    
-    '''
-
     # CloudRunの環境変数から取得
-    cloudrun_task_index = int(os.environ.get("CLOUD_RUN_TASK_INDEX", 0))
-    cloud_task_count = int(os.environ.get("CLOUD_RUN_TASK_COUNT", 1))
 
     # batch数
     n_batch = int(os.environ.get("N_BATCH", 3))
+    job_idx = int(job_idx)+1
+    N_JOB = batch_range
 
-    print(f"cloudrun_task_index: {cloudrun_task_index}")
-    print(f"cloud_task_count: {cloud_task_count}")
-    # Todo:確認
-    start_idx, end_idx = (batch_id * n_batch,
-                          (batch_id + 1) * n_batch)
-    # show example
-    target_path_list = cc_path_list[start_idx:end_idx]
-    print(f"target_path_list:{target_path_list}")
-    print(f"start_idx:{start_idx},end_idx:{end_idx}")
-    # divide into with cloudrun_task_index
-    for cc_path in tqdm(target_path_list):
+    N_TASK = int(os.environ.get("CLOUD_RUN_TASK_COUNT", 1))
 
-        save_dict = download_and_parse(cc_path, f"process/batch{batch_id}")
-        print(save_dict)
-        if save_dict["is_error"]:
-            pass
-        else:
-            for tag_record in save_dict["tag_records"]:
-                title = ""
-                try:
-
-                    if tag_record["title"] == "":
-                        title = "no_title"
-                    else:
-                        title = tag_record["title"]
-
-                    pre_cleaned_text = tag_record["pre_cleaned_text"]
-                    record_id = tag_record["record_id"]
-                    url = tag_record["url"]
-                    timestamp = tag_record["timestamp"]
-                    html_text = tag_record["html"]
-                    warc = Warc(
-                        id=uuid.uuid4(),
-                        record_id=record_id,
-                        url=url,
-                        title=title,
-                        timestamp=timestamp,
-                        pre_cleaned_text=pre_cleaned_text,
-                        html_text=html_text,
-                        path=cc_path,
-                        batch_number=batch_id
-                    )
-
-                    print(warc)
-                    WarcRepository.save(warc)
-
-                except Exception as e:
-                    print(e)
-                    print("error occured at save warc")
-
-            #
+    ONE_BATCH_SIZE = N_TASK * N_JOB
 
 
-def main(batch_id):
-    """
-    download path list from commoncrawl
-    """
-    # Parameter
-    # 今回処理するwarcのパスリストが圧縮されているURL
-    # CC-MAIN-2023-50以外にも存在するが, 一旦このURLのみで行う
-    path_urls = [
-        "https://data.commoncrawl.org/crawl-data/CC-MAIN-2023-50/warc.paths.gz",
+    print(f"ONE_BATCH_SIZE:{ONE_BATCH_SIZE}"
+          f"n_batch:{n_batch},job_idx:{job_idx},batch_range:{batch_range}"
+          )
+
+    print(f"cc_path_list:{cc_path_list}")
+    print(f"cc_path_listの長さ:{len(cc_path_list)}")
+
+    start_idx = ONE_BATCH_SIZE * (batch_id - 1)
+    end_idx = ONE_BATCH_SIZE * (batch_id + 1)
+
+    target_path_list = cc_path_list[
+       start_idx:end_idx
     ]
-    # パスリストをダウンロードするフォルダの作成
-    os.makedirs("data", exist_ok=True)
-    os.makedirs("data/path_list", exist_ok=True)
-    os.makedirs("data/path_list", exist_ok=True)
+    print(f"target_path_listの長さ:{len(target_path_list)}")
 
-    # Process
-    # Parameterで指定したURLからパス(gz)をダウンロードし,解凍する
-    for url in path_urls:
-        file_name = url.split("/")[-2] + ".gz"
+    target_path_list = target_path_list[job_idx:job_idx + n_batch]
+
+    print(f"target_path_listの長さ:{len(target_path_list)}")
+    print(f"batch_id:{batch_id},job_idx:{job_idx},target_path_list:{target_path_list}")
+
+
+    print(f"target_path_list:{target_path_list}")
+    for cc_path in tqdm(target_path_list):
+        warcs = []
         try:
-            # パスリストが格納されているgzファイルをdata_list配下に保存
-            download_file(url, f"data/path_list/{file_name}")
-            # 保存されたgzファイルを解凍する
-            decompress_gz(f"data/path_list/{file_name}",
-                          f"data/path_list/{os.path.splitext(file_name)[0]}")
+            save_dict = download_and_parse(cc_path, f"process/batch{batch_id}")
+            print(save_dict)
+            if save_dict["is_error"]:
+                pass
+            else:
+                for tag_record in save_dict["tag_records"]:
+                    try:
 
+                        if tag_record["title"] == "":
+                            title = "no_title"
+                        else:
+                            title = tag_record["title"]
 
-        except:
-            pass
-    # Process
+                        pre_cleaned_text = tag_record["pre_cleaned_text"]
+                        record_id = tag_record["record_id"]
+                        url = tag_record["url"]
+                        # timestamp = tag_record["timestamp"]
+                        html_text = tag_record["html"]
+                        trafilatura_content = tag_record["trafilatura_content"]
+                        warc = Warc(
+                            record_id=record_id,
+                            url=url,
+                            title=title,
+                            pre_cleaned_text=pre_cleaned_text,
+                            html_text=html_text,
+                            path=cc_path,
+                            batch_number=batch_id,
+                            trafilatura_content=trafilatura_content
+                        )
+                        warcs.append(warc)
+
+                    except Exception as e:
+                        print(e)
+                        print("error occured at save warc")
+            put_bq_warcs(warcs)
+        except Exception as e:
+            failed_url = FailedWarc(
+                error_message=str(e),
+                warc_path=cc_path,
+                batch_number=batch_id
+            )
+            put_bq_failed_urls(failed_url)
+
+def main(batch_id,job_idx,batch_range):
+
     try:
-        # 保存されているwarcファイルのパスのリストを取得
-        cc_paths = get_cc_path_list(path_dir="data/path_list/*")
-        # 表示
-        # ここの番号を指定を受けた番号に変更をしてください
-        # is_debug = True
-        is_debug = os.environ.get('IS_DEBUG', "False")
-        if is_debug == "True":
-            is_debug = True
-        else:
-            is_debug = False
-        if is_debug:
-            print("デバッグモードで実行します")
-        else:
-            print("本番モードで実行します")
-
-        submit_dir = "submit"
 
         # batchの番号に従って,データの処理
-        curation(batch_id, submit_dir=submit_dir, is_debug=is_debug)
-        print(f"batch{batch_id}の処理が完了しました")
+        curation(batch_id,job_idx,batch_range)
+        print(f"batch{batch_id} job_idx:{job_idx},処理するバッチの数${batch_range}の処理が完了しました")
     except Exception as e:
         print(e)
 
 
-class ProgressPercentage(object):
-    def __init__(self, filename):
-        self._filename = filename
-        self._size = float(os.path.getsize(filename))
-        self._seen_so_far = 0
-        self._lock = threading.Lock()
 
-    def __call__(self, bytes_amount):
-        with self._lock:
-            self._seen_so_far += bytes_amount
-            percentage = (self._seen_so_far / self._size) * 100
-            sys.stdout.write(
-                "\r%s  %s / %s  (%.2f%%)" % (
-                    self._filename, self._seen_so_far, self._size,
-                    percentage))
-            sys.stdout.flush()
-
-
+@retry_decorator(max_retries=2, delay=1)
 def download_warc_file_with_s3(path):
     url, gz_path, warc_path = cc_path_to_urls(path)
 
@@ -455,31 +390,33 @@ def download_warc_file_with_s3(path):
         # s3からダウンロードする設定
         download_file_with_progress(CC_BUCKET_NAME, path, warc_path)
         print(f'warc:{warc_path}のダウンロードが完了しました')
-
-        # decompress_gz(gz_path, warc_path,
-        #               remove_gz=False, fill_blank_gz=True)
         return warc_path
 
     except Exception as e:
         print(e)
         print("fail loading " + url)
-        return warc_path
+        raise e
 
 
 if __name__ == "__main__":
+    time_to_sleep = random.randint(2, 5)
+    time.sleep(time_to_sleep)
+    import socket
+
+    # ホスト名を取得、表示
+    host = socket.gethostname()
+    print(host)
+
+    # ipアドレスを取得、表示
+    res = requests.get('https://ifconfig.me')
+    print('your globalip: ' + res.text)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("batch_number", type=int, help="batch_number")
+    parser.add_argument("job_index", type=int, help="job_index")
+    parser.add_argument("batch_range", type=int, help="batch_range")
     args = parser.parse_args()
     batch_number = int(args.batch_number)
-
-    # Cloud run のtask数
-    n_task = int(os.environ.get("CLOUD_RUN_TASK_COUNT", 1))
-    # Cloud run のindex
-    cloud_run_task = int(os.environ.get('CLOUD_RUN_TASK_INDEX'))
-    # 各taskに付与するbatch_id
-    # Todo:確認
-    batch_id = n_task * batch_number + cloud_run_task
-
-    print(f"cloudrun idx is {cloud_run_task}, cloud run task is {n_task},")
-    print(f"batch_id is {batch_id}")
-    main(batch_id)
+    job_idx = int(args.job_index)
+    batch_range = int(args.batch_range)
+    main(batch_number,job_idx,batch_range)

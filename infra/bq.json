@@ -1,0 +1,40 @@
+[
+    {
+      "name": "id",
+      "type": "STRING",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "record_id",
+      "type": "INT64"
+    },
+    {
+      "name": "url",
+      "type": "STRING",
+      "description": "Unique URL"
+    },
+    {
+      "name": "title",
+      "type": "STRING"
+    },
+    {
+      "name": "timestamp",
+      "type": "DATETIME"
+    },
+    {
+      "name": "path",
+      "type": "STRING"
+    },
+    {
+      "name": "pre_cleaned_text",
+      "type": "STRING"
+    },
+    {
+      "name": "html_text",
+      "type": "STRING"
+    },
+    {
+      "name": "batch_number",
+      "type": "INT64"
+    }
+]

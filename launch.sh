@@ -1,25 +1,16 @@
 #!/bin/bash
 
 # Cloud Runサービスの名前
-NUMBER=$1
+BATCH_NUMBER=$1
 REGION=$2
 SERVICE_NAME=$3
 TASK_NUMBER=$4
+JOB_IDX=$5
+BATCH_RANGE=$6
 # 初期のbatch_number
-BATCH_NUMBER=$NUMBER
-
-# サービスに渡すコンテナコマンドのベース
-
-# 100から200までのbatch_numberに対してループ
-for ((batch_number=$NUMBER; batch_number<=$NUMBER; batch_number++)); do
-    # コンテナコマンドを生成
-    CONTAINER_ARGS="$batch_number"
-
     # ジョブを非同期で起動するコマンドを実行
-    gcloud run jobs execute $SERVICE_NAME \
-     --args "$CONTAINER_ARGS"  \
+gcloud run jobs execute $SERVICE_NAME \
+     --args "$BATCH_NUMBER,$JOB_IDX,$BATCH_RANGE"  \
      --region=$REGION \
      --tasks=$TASK_NUMBER \
     # batch_numberを1増やす
-    ((BATCH_NUMBER++))
-done
