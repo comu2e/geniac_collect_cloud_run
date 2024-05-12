@@ -40,7 +40,7 @@ def put_bq_warcs(warcs:List[Warc]):
     print('chunk_size is', chunk_size)
     try:
         for i in range(0, length_records, chunk_size):
-            time.sleep(0.3)
+            time.sleep(1)
             df = pd.DataFrame(records[i:i+chunk_size])
             df.to_gbq(table_id, if_exists='append')
             print('success insert')

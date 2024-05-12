@@ -5,10 +5,17 @@ gcloud auth login
 
 ```
 
-## launch.shの実行
+## shell.shの実行
 1. BATCH_NUMBERを設定する。
 
 ```sh
-sh launch.sh
+sh shell.sh
 
 ```
+
+job_idx　を0から3まで変更することで、それぞれのジョブを実行することができる。
+
+sh shell.shを実行後は
+data/job/{実行時間}.csvにジョブの実行結果が保存される。
+
+data/rest/rest_path2.csv空実行したパスを削除する。

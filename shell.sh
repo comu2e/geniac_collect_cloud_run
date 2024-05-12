@@ -5,11 +5,11 @@ batch_number=1
 # フォーマットしたデータを表示
 REGIONS=( "us-central1" "us-east1" "us-west1" "us-east4")
 JOB_NAMES=("crawler-uscentral" "crawler2" "crawler-uswest" "crawler-useast4" )
-TASK_COUNTS=(200 200 200 200)
+TASK_COUNTS=(200 150 150 150)
 
 N_BATCH=3
 # どこのリージョンで行うかを設定する
-job_idx=0
+job_idx=2
 
 REGION=${REGIONS[$job_idx]}
 JOB_NAME=${JOB_NAMES[$job_idx]}
@@ -59,4 +59,4 @@ lines=${lines%+}
 
 
 echo "$lines"
-#gcloud run jobs execute $JOB_NAME --args "$lines" --region=$REGION --tasks=$TASK
+gcloud run jobs execute $JOB_NAME --args "$lines" --region=$REGION --tasks=$TASK
