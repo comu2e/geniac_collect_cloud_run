@@ -1,4 +1,5 @@
 import os
+import time
 
 from typing import List
 
@@ -6,8 +7,10 @@ import pandas as pd
 
 from src.model.failed_warcs import  FailedWarc
 from src.model.warc import Warc
+from src.retry import retry_decorator
 
 
+@retry_decorator(max_retries=2, delay=1)
 def put_bq_warcs(warcs:List[Warc]):
     table_id = 'hatakeyamallm.cc_dataset.warcs'
     records = [
@@ -24,10 +27,21 @@ def put_bq_warcs(warcs:List[Warc]):
         for warc in warcs
     ]
     length_records = len(records)
-    chuk_size = 8
+    CHUNK_SIZE = 20
+
+    if length_records == 0:
+        print('no records to insert')
+        return
+    if length_records < CHUNK_SIZE:
+        chunk_size = length_records
+    else:
+        chunk_size = CHUNK_SIZE
+
+    print('chunk_size is', chunk_size)
     try:
-        for i in range(0, length_records, chuk_size):
-            df = pd.DataFrame(records[i:i+chuk_size])
+        for i in range(0, length_records, chunk_size):
+            time.sleep(0.3)
+            df = pd.DataFrame(records[i:i+chunk_size])
             df.to_gbq(table_id, if_exists='append')
             print('success insert')
     except Exception as e:

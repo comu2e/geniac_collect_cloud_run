@@ -385,14 +385,14 @@ if __name__ == "__main__":
     # target_path_list = ast.literal_eval(input_target_list).split("+")
     # batch_number = args.batch_number
 
-    target_path_list = input_target_list.split("+ ")
+    target_path_list = input_target_list.split("+")
     print(f"length of target_path_list is {len(target_path_list)}")
     for t in target_path_list:
         print(t)
     # batch_number = int(batch_number)
     batch_number = 1
-    target_path_list = target_path_list[:len(target_path_list)-1]
 
+    print(f"target_path_list is {target_path_list}")
     print(f"batch_number is {batch_number}")
 
     main(target_path_list,batch_number)
