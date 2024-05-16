@@ -59,7 +59,7 @@ def decompress_gz(gz_path, output_path, remove_gz=True, fill_blank_gz=False):
             f.write("")
 
 
-def get_cc_path_list(path_dir="data/rest_path_list/*"):
+def get_cc_path_list(path_dir="data/path_list/*"):
     path_list = []
     for file_path in glob.glob(path_dir):
         print(file_path)
@@ -257,12 +257,14 @@ def download_and_parse(cc_path, base_dir=None):
         "error_text": error_text
     }
     # delete warc path file
-    # file容量開けるため
+
+    # ダウンロードした場合メモリ不足になるため。
+    # file容量開ける
+    # 1ファイル2GBまで
+
     print(f'remove {warc_path}')
     os.remove(warc_path)
     return save_dict
-    # with gzip.open(save_gz_path, 'wt', encoding="utf-8") as zipfile:
-    #    json.dump(save_dict, zipfile, indent=2, ensure_ascii=False)
 
 
 class TagRecord(BaseModel):
@@ -281,13 +283,14 @@ class SaveDict(BaseModel):
     error_text: str
 
 
-def curation(target_path_list,batch_id):
+def curation(batch_number:int):
     # CloudRunの環境変数から取得
+    cc_path_list = get_cc_path_list()
 
-    N_BATCH = 3
-    cloud_run_task_idx = int(os.environ.get("CLOUD_RUN_TASK_INDEX",1))
-    print(f"cloud_run_task_idx == {cloud_run_task_idx}")
-    task_list = target_path_list[cloud_run_task_idx*N_BATCH:(cloud_run_task_idx+1)*N_BATCH]
+    # バッチ番号に従って、処理するデータを取得
+    start_index = batch_number
+    end_index = batch_number + 1
+    task_list = cc_path_list[start_index:end_index]
 
     print(f"task_list == {task_list}")
     for cc_path in tqdm(task_list):
@@ -319,7 +322,7 @@ def curation(target_path_list,batch_id):
                             pre_cleaned_text=pre_cleaned_text,
                             html_text=html_text,
                             path=cc_path,
-                            batch_number=batch_id,
+                            batch_number=batch_number,
                             trafilatura_content=trafilatura_content
                         )
                         warcs.append(warc)
@@ -332,16 +335,15 @@ def curation(target_path_list,batch_id):
             failed_url = FailedWarc(
                 error_message=str(e),
                 warc_path=cc_path,
-                batch_number=batch_id
+                batch_number=batch_number
             )
             put_bq_failed_urls(failed_url)
 
-def main(target_path_list,batch_id):
+def main(batch_number:int):
 
     try:
-
         # batchの番号に従って,データの処理
-        curation(target_path_list,batch_id)
+        curation(batch_number)
     except Exception as e:
         print(e)
 
@@ -372,27 +374,18 @@ def download_warc_file_with_s3(path):
 
 
 if __name__ == "__main__":
+    # CommonCrawlのアクセス制限を回避するために、ランダムな秒数だけスリープする
     time_to_sleep = random.randint(2, 5)
     time.sleep(time_to_sleep)
 
+    # バッチ番号を引数として受け取る
     parser = argparse.ArgumentParser()
-    parser.add_argument("target_path_list", type=str, help="target_path_list")
-    # parser.add_argument("batch_number", type=int, help="batch_number")
+
+    parser.add_argument("batch_number", type=int, help="batch_number,0から9万までの数字を入力してください")
     args = parser.parse_args()
 
+    batch_number = args.batch_number
 
-    input_target_list = args.target_path_list
-    # target_path_list = ast.literal_eval(input_target_list).split("+")
-    # batch_number = args.batch_number
-
-    target_path_list = input_target_list.split("+")
-    print(f"length of target_path_list is {len(target_path_list)}")
-    for t in target_path_list:
-        print(t)
-    # batch_number = int(batch_number)
-    batch_number = 1
-
-    print(f"target_path_list is {target_path_list}")
     print(f"batch_number is {batch_number}")
 
-    main(target_path_list,batch_number)
+    main(batch_number)
